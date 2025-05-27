@@ -8,23 +8,15 @@ pipeline {
 
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerCredential')
-        REGION = "ap-northeast-2"
-        AWS_CREDENTIAL_NAME = "AWSCredentials"
+        KUBECONFIG_CREDENTIALS = credentials('kubeconfig') // 쿠버네티스 인증 정보
+        DOCKER_IMAGE = "joseongmin/spring-petclinic"
     }
 
     stages {
         stage('Git Clone') {
             steps {
                 echo 'Git Clone'
-                git url: 'https://github.com/whtjdals1813/spring-petclinic.git', branch: 'main'
-            }
-            post {
-                success {
-                    echo 'Git Clone Success'
-                }
-                failure {
-                    echo 'Git Clone Fail'
-                }
+                git url: 'https://github.com/whtjdals1813/spring-petclinic-mark2.git', branch: 'master'
             }
         }
 
@@ -35,82 +27,42 @@ pipeline {
             }
         }
 
-        stage('Docker Image Build') {
+        stage('Docker Image Build & Push') {
             steps {
-                echo 'Docker Image Build'
-                dir("${env.WORKSPACE}") {
-                    sh '''
-                        docker build -t spring-petclinic:$BUILD_NUMBER .
-                        docker tag spring-petclinic:$BUILD_NUMBER joseongmin/spring-petclinic:latest
-                    '''
-                }
-            }
-        }
-
-        stage('Docker Image Push') {
-            steps {
+                echo 'Docker Image Build & Push'
                 sh '''
+                    docker build -t $DOCKER_IMAGE:$BUILD_NUMBER .
+                    docker tag $DOCKER_IMAGE:$BUILD_NUMBER $DOCKER_IMAGE:latest
+
                     echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin
-                    docker push joseongmin/spring-petclinic:latest
+                    docker push $DOCKER_IMAGE:$BUILD_NUMBER
+                    docker push $DOCKER_IMAGE:latest
                 '''
             }
         }
 
-        stage('Remove Docker Image') {
+        stage('Kubernetes Deploy') {
+            steps {
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG_FILE
+
+                        # 이미지 버전을 Deployment에 반영
+                        sed "s|<IMAGE_TAG>|$DOCKER_IMAGE:$BUILD_NUMBER|g" k8s/deployment.yaml > k8s/deployment-gen.yaml
+                        
+                        kubectl apply -f k8s/deployment-gen.yaml
+                        kubectl apply -f k8s/service.yaml
+                    '''
+                }
+            }
+        }
+
+        stage('Cleanup Docker Images') {
             steps {
                 sh '''
-                    docker rmi spring-petclinic:$BUILD_NUMBER
-                    docker rmi joseongmin/spring-petclinic:latest
+                    docker rmi $DOCKER_IMAGE:$BUILD_NUMBER || true
+                    docker rmi $DOCKER_IMAGE:latest || true
                 '''
-            }
-        }
-
-        stage('Upload to S3') {
-            steps {
-                echo "Upload to S3"
-                dir("${env.WORKSPACE}") {
-                    sh 'zip -r scripts.zip ./scripts appspec.yml'
-                    withAWS(region: "${REGION}", credentials: "${AWS_CREDENTIAL_NAME}") {
-                        s3Upload(file: "scripts.zip", bucket: "project2-bucket-00")
-                    }
-                    sh 'rm -rf ./deploy.zip'
-                }
-            }
-        }
-
-        stage('Codedeploy Workload') {
-            steps {
-                echo "create Codedeploy group"
-                withAWS(region: "${REGION}", credentials: "${AWS_CREDENTIAL_NAME}") {
-                 // 애플리케이션 없으면 생성
-                    sh '''
-                        if ! aws deploy get-application --application-name project2-app > /dev/null 2>&1; then
-                          echo "Creating CodeDeploy application project2-app..."
-                          aws deploy create-application --application-name project2-app --compute-platform Server
-                        else
-                          echo "CodeDeploy application project2-app already exists. Skipping creation."
-                        fi
-                    '''
-                    sh '''
-                        aws deploy create-deployment-group \
-                        --application-name project2-app \
-                        --auto-scaling-groups project2-autoscaling-group \
-                        --deployment-group-name project2-production-in_place-${BUILD_NUMBER} \
-                        --deployment-config-name CodeDeployDefault.OneAtATime \
-                        --service-role-arn arn:aws:iam::491085389788:role/project2-code-deploy-role
-                    '''
-
-                    echo "Codedeploy Workload"
-
-                    sh '''
-                        aws deploy create-deployment \
-                        --application-name project2-app \
-                        --deployment-config-name CodeDeployDefault.OneAtATime \
-                        --deployment-group-name project2-production-in_place-${BUILD_NUMBER} \
-                        --s3-location bucket=project2-bucket-00,bundleType=zip,key=scripts.zip
-                    '''
-                    sleep(10)
-                }
             }
         }
     }
