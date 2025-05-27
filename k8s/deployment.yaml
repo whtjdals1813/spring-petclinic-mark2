@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: spring-petclinic
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: spring-petclinic
@@ -14,6 +14,6 @@ spec:
     spec:
       containers:
       - name: petclinic
-        image: joseongmin/spring-petclinic:latest
+        image: <IMAGE_TAG>
         ports:
         - containerPort: 8080
