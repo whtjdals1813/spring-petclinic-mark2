@@ -51,7 +51,6 @@ pipeline {
                         sed "s|<IMAGE_TAG>|$DOCKER_IMAGE:$BUILD_NUMBER|g" k8s/deployment.yaml > k8s/deployment-gen.yaml
                         
                         kubectl apply -f k8s/deployment-gen.yaml
-                        kubectl apply -f k8s/service.yaml
                     '''
                 }
             }
