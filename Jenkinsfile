@@ -10,6 +10,7 @@ pipeline {
         DOCKERHUB_CREDENTIALS = credentials('dockerCredential')
         KUBECONFIG_CREDENTIALS = credentials('kubeconfig') // 쿠버네티스 인증 정보
         DOCKER_IMAGE = "joseongmin/spring-petclinic"
+        TESTCONTAINERS_RYUK_DISABLED = 'true'
     }
 
     stages {
